@@ -13,15 +13,25 @@ const { Server } = require("socket.io");
 const redisAdapter = require("@socket.io/redis-adapter");
 const Redis = require("ioredis");
 
-const pubClient = new Redis();
+// const pubClient = new Redis();
+
+const pubClient = new Redis(process.env.REDIS_URL);
+
 const subClient = pubClient.duplicate();
 
+// const io = new Server(server, {
+//   cors: {
+//     origin: "http://localhost:3000",
+//     methods: ["GET", "POST"],
+//   },
+// });
+
 const io = new Server(server, {
-  cors: {
-    origin: "http://localhost:3000",
-    methods: ["GET", "POST"],
-  },
-});
+    cors: {
+      origin: "https://nomia-server.herokuapp.com/",
+      methods: ["GET", "POST"],
+    },
+  });
 
 
 io.adapter(redisAdapter(pubClient, subClient));
@@ -43,6 +53,7 @@ const roomHandler = require('./handlers/RoomHandler');
 const gameHandler = require('./handlers/GameHandler'); 
 
 //CONNECTION
+
 io.on("connection", (socket) => {
   //LOG NEW CONNECTION
   console.log("a user connected", socket.id);
@@ -52,7 +63,7 @@ io.on("connection", (socket) => {
   // INITALIZE GAME
   gameHandler(io, socket, pubClient);
 
-  
+
 //   socket.on("leaveRoom", (roomCode, cb) => {
 //     socket.leave(roomCode);
 //     cb({ status: "success", message: "left room" });
