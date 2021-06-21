@@ -28,8 +28,7 @@ const subClient = pubClient.duplicate();
 
 const io = new Server(server, {
     cors: {
-      origin: "https://nomia-server.herokuapp.com/",
-      methods: ["GET", "POST"],
+      origin: "*",
     },
   });
 
