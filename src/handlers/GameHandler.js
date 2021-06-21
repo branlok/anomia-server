@@ -54,7 +54,7 @@ module.exports = async (io, socket, pubClient) => {
     let roomSettings = await getGameData(pubClient, roomCode);
     let playerOrder = await getPlayerPos(pubClient, roomCode);
     let playerId = playerOrder[roomSettings.playerTurn]; //getID of player.
-
+    console.log(playerId, "draw");
     //Make sure its the right player drawing.
     if (!playerId === socket.id) return;
 
@@ -67,7 +67,6 @@ module.exports = async (io, socket, pubClient) => {
     if (revealCard == null) {
       let playerIds = playerOrder;
       let results = await mGetPlayerPoints(pubClient, roomCode, playerIds);
-      console.log("gameover");
       io.to(roomCode).emit("roomAnnouncement", {
         revealed: null,
         playerTurn: null,
