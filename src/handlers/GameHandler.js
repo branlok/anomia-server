@@ -7,6 +7,8 @@ const getPlayerHand = require("../RedisModel/getPlayerHand");
 const getPlayerPos = require("../RedisModel/getPlayerPos");
 const getTopCard = require("../RedisModel/getTopCard");
 const getWildcards = require("../RedisModel/getWildcards");
+const incrPlayerPoint = require("../RedisModel/incrPlayerPoint");
+const mGetPlayerPoints = require("../RedisModel/mGetPlayerPoints");
 const popPlayerhand = require("../RedisModel/popPlayerhand");
 const setPlayerhand = require("../RedisModel/setPlayerhand");
 const setPlayersPos = require("../RedisModel/setPlayersPos");
@@ -62,6 +64,18 @@ module.exports = async (io, socket, pubClient) => {
 
     let revealCard = await getTopCard(pubClient, roomCode);
 
+    if (revealCard == null) {
+      let playerIds = playerOrder;
+      let results = await mGetPlayerPoints(pubClient, roomCode, playerIds);
+      console.log("gameover");
+      io.to(roomCode).emit("roomAnnouncement", {
+        revealed: null,
+        playerTurn: null,
+        action: "endgame",
+        results
+      });
+      return;
+    }
     //is it wild card?
 
     let wildCard = cards[revealCard].type == "wild" ? true : false;
@@ -81,38 +95,33 @@ module.exports = async (io, socket, pubClient) => {
       }
       let tophands = await Promise.all(promiseArray);
       let match = [];
-      console.log(tophands);
       tophands.forEach((item, idx) => {
-          if (item.length == 0) {
-              return;
-          }
-          if (cards[item[0]].match[0] == cards[revealCard].match[0]) {
-            match.push(playerOrder[idx])
-          } else if (cards[item[0]].match[0] == cards[revealCard].match[1]) {
-            match.push(playerOrder[idx])
-          }
-      })
-
-      console.log(match);
+        //this evaluates all cards between, can use a better algorithmn
+        if (item.length == 0) {
+          return;
+        }
+        if (cards[item[0]].match[0] == cards[revealCard].match[0]) {
+          match.push(playerOrder[idx]);
+        } else if (cards[item[0]].match[0] == cards[revealCard].match[1]) {
+          match.push(playerOrder[idx]);
+        }
+      });
 
       if (match.length == 2) {
         io.to(roomCode).emit("faceoff_challenged", {
-            faceoff: "init",
-            playersInvolved: match,
-          });
+          faceoff: "init",
+          playersInvolved: match,
+        });
       }
       //check if there is a pair;
-      
 
-
-
-    //   if (dual) {
-    //     io.to(roomCode).emit("faceoff_challenged", {
-    //       faceoff: "init",
-    //       playersInvolved: dual,
-    //     });
-    //     return;
-    //   }
+      //   if (dual) {
+      //     io.to(roomCode).emit("faceoff_challenged", {
+      //       faceoff: "init",
+      //       playersInvolved: dual,
+      //     });
+      //     return;
+      //   }
 
       //end test
       return;
@@ -156,14 +165,6 @@ module.exports = async (io, socket, pubClient) => {
       }
     }
 
-    if (revealCard === null) {
-      io.to(roomCode).emit("roomAnnouncement", {
-        revealed: null,
-        playerTurn: null,
-        action: "endgame",
-      });
-      return;
-    }
     await editGameProgress(pubClient, roomCode, "playerTurn", nextTurn); // update to next turn.
 
     await setPlayerhand(pubClient, roomCode, socket.id, revealCard);
@@ -212,10 +213,13 @@ module.exports = async (io, socket, pubClient) => {
     await popPlayerhand(pubClient, roomCode, faceoffIds[0]);
     await popPlayerhand(pubClient, roomCode, faceoffIds[1]);
 
+    await incrPlayerPoint(pubClient, roomCode, socket.id);
+
     io.to(roomCode).emit(`faceoff_resolved_${faceoffIds[0]}`, {
       victor: socket.id,
       nextToDraw: playerOrder[roomSettings.playerTurn],
     });
+
     io.to(roomCode).emit(`faceoff_resolved_${faceoffIds[1]}`, {
       victor: socket.id,
       nextToDraw: playerOrder[roomSettings.playerTurn],
@@ -225,7 +229,85 @@ module.exports = async (io, socket, pubClient) => {
       nextToDraw: playerOrder[roomSettings.playerTurn],
     });
 
+    //TEST
+    let promiseArray = [];
+    let wildCardPresent = await getWildcards(pubClient, roomCode);
+    console.log(wildCardPresent, "read this");
+    for (let i = 0; i < playerOrder.length; i++) {
+      promiseArray.push(getPlayerHand(pubClient, roomCode, playerOrder[i]));
+    }
+
+    let tophands = await Promise.all(promiseArray);
+    let match = [];
+    if (wildCardPresent.length > 0) {
+      tophands.forEach((item, idx) => {
+        //this evaluates all cards between, can use a better algorithmn
+        if (item.length == 0) {
+          return;
+        }
+
+        if (cards[item[0]].match[0] == cards[wildCardPresent[0]].match[0]) {
+          match.push(playerOrder[idx]);
+        } else if (
+          cards[item[0]].match[0] == cards[wildCardPresent[0]].match[1]
+        ) {
+          match.push(playerOrder[idx]);
+        }
+      });
+    }
+
+    let pair = [];
+    for (let i = 0; i < tophands.length; i++) {
+      triggered = false;
+      if (triggered) {
+        break;
+      }
+      for (let j = 0; j < tophands.length; j++) {
+        if (i == j) {
+          continue;
+        } else {
+          if (
+            cards[tophands[i][0]].match[0] == cards[tophands[j][0]].match[0]
+          ) {
+            pair.push(playerOrder[i], playerOrder[j]);
+            triggered = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // tophands.forEach((item, idx) => {
+    //     //this evaluates all cards between, can use a better algorithmn
+    //     if (item.length == 0) {
+    //       return;
+    //     }
+    //     if (cards[item[0]].match[0] == cards[wildCardPresent[0]].match[0]) {
+    //       match.push(playerOrder[idx]);
+    //     } else if (cards[item[0]].match[0] == cards[wildCardPresent[0]].match[1]) {
+    //       match.push(playerOrder[idx]);
+    //     }
+    //   });
+
+    console.log(match, pair, "the pair");
+
+    if (match.length == 2) {
+      io.to(roomCode).emit("faceoff_challenged", {
+        faceoff: "init",
+        playersInvolved: match,
+      });
+    }
+
+    if (pair.length >= 2) {
+      io.to(roomCode).emit("faceoff_challenged", {
+        faceoff: "init",
+        playersInvolved: pair,
+      });
+    }
+
     cb({ message: "Ayo" });
+
+    //TEST
   };
 
   socket.on("startGame", startGame);
