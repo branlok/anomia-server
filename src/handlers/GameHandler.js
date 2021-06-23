@@ -6,12 +6,14 @@ const getGameMembersData = require("../RedisModel/getGameMembersData");
 const getPlayerHand = require("../RedisModel/getPlayerHand");
 const getPlayerPos = require("../RedisModel/getPlayerPos");
 const getTopCard = require("../RedisModel/getTopCard");
+const getTurnStatus = require("../RedisModel/getTurnStatus");
 const getWildcards = require("../RedisModel/getWildcards");
 const incrPlayerPoint = require("../RedisModel/incrPlayerPoint");
 const mGetPlayerPoints = require("../RedisModel/mGetPlayerPoints");
 const popPlayerhand = require("../RedisModel/popPlayerhand");
 const setPlayerhand = require("../RedisModel/setPlayerhand");
 const setPlayersPos = require("../RedisModel/setPlayersPos");
+const setTurnStatus = require("../RedisModel/setTurnStatus");
 const setWildCards = require("../RedisModel/setWildCards");
 
 module.exports = async (io, socket, pubClient) => {
@@ -51,10 +53,15 @@ module.exports = async (io, socket, pubClient) => {
 
   const draw = async (roomCode, cb) => {
     //check which player,
+    let drawable = await getTurnStatus(pubClient, roomCode, "processing turn");
+    console.log(drawable);
+    if (drawable == "processing turn") return;
+
+    await setTurnStatus(pubClient, roomCode, "processing turn");
     let roomSettings = await getGameData(pubClient, roomCode);
     let playerOrder = await getPlayerPos(pubClient, roomCode);
+    //check player turn
     let playerId = playerOrder[roomSettings.playerTurn]; //getID of player.
-    console.log(playerId, "draw");
     //Make sure its the right player drawing.
     if (!playerId === socket.id) return;
 
@@ -67,6 +74,7 @@ module.exports = async (io, socket, pubClient) => {
     if (revealCard == null) {
       let playerIds = playerOrder;
       let results = await mGetPlayerPoints(pubClient, roomCode, playerIds);
+      await setTurnStatus(pubClient, roomCode, "open");
       io.to(roomCode).emit("roomAnnouncement", {
         revealed: null,
         playerTurn: null,
@@ -107,6 +115,7 @@ module.exports = async (io, socket, pubClient) => {
       });
 
       if (match.length == 2) {
+        await setTurnStatus(pubClient, roomCode, "open");
         io.to(roomCode).emit("faceoff_challenged", {
           faceoff: "init",
           playersInvolved: match,
@@ -169,6 +178,7 @@ module.exports = async (io, socket, pubClient) => {
     await setPlayerhand(pubClient, roomCode, socket.id, revealCard);
 
     if (dual) {
+        await setTurnStatus(pubClient, roomCode, "open");
       io.to(roomCode).emit(`player_draw`, {
         card: revealCard,
         playerId: playerId,
@@ -187,7 +197,7 @@ module.exports = async (io, socket, pubClient) => {
     //   playerTurn: nextTurn,
     //   action: "none",
     // });
-
+    await setTurnStatus(pubClient, roomCode, "open");
     io.to(roomCode).emit(`player_draw`, {
       card: revealCard,
       playerId: playerId,
