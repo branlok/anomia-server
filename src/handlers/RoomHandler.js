@@ -26,17 +26,17 @@ module.exports = async (io, socket, pubClient) => {
   const createPartyRoom = async (username, password, cb) => {
     //START OF SET UP ROOM
     let roomCode = nanoid(6);
-    // let cards = [
-    //   1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-    //   22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    //   40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
-    //   58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
-    //   76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
-    //   94, 95, 96, 97, 98, 99, 100,
-    // ];
+    let cards = [
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+      22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+      40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
+      58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
+      76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+      94, 95, 96, 97, 98, 99, 100,
+    ];
 
-    let cards = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-        22, 23, 24]
+    // let cards = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+    //     22, 23, 24]
     let shuffledCards = shuffle(cards);
     setCards(pubClient, roomCode, shuffledCards); // dont need to await
 
@@ -176,8 +176,18 @@ module.exports = async (io, socket, pubClient) => {
     console.log(await Promise.all(promiseArray));
   };
 
+  let checkRoom = (roomCode, cb) => {
+      console.log("i ran for some reason")
+    if (!confirmRoomInitialized(io, cb, roomCode)) {
+        cb({status: "error", message: "room does not exist"})
+        return;
+    }; //should also add  is only open if the game is in lobby mode incase random person joins in during game.
+    if (!confirmRoomHasCapacity(io, cb, roomCode)) return;
+  }
+
   //MAIN SEQUENCES
   socket.on("setNewRoom", createPartyRoom);
+  socket.on("checkRoom", checkRoom)
   socket.on("joinNewRoom", joinPartyRoom);
   socket.on("userReady", userReady);
   socket.on("userNotReady", userNotReady);
@@ -253,10 +263,7 @@ function confirmUserFromRoom(cb, socket, roomCode) {
 function confirmRoomInitialized(io, cb, roomCode) {
   let exists = io.of("/").adapter.rooms.has(roomCode);
   if (!exists) {
-    cb({
-      status: "failed",
-      room: "room does not exist or has yet initialized",
-    });
+    cb({status: "error", message: "Room does not exist"})
     return false;
   } else {
     return true;
@@ -281,7 +288,7 @@ function confirmRoomRequirePassword(cb, roomSettings, providedPassword) {
       //we allow user to join room if password matches.
       return true;
     } else {
-      cb({ status: "failed", message: "password is wrong" });
+      cb({ status: "failed", message: "wrong password" });
       return false;
     }
   } else {
