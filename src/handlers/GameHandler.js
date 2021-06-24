@@ -53,11 +53,11 @@ module.exports = async (io, socket, pubClient) => {
 
   const draw = async (roomCode, cb) => {
     //check which player,
-    let drawable = await getTurnStatus(pubClient, roomCode, "processing turn");
-    console.log(drawable);
-    if (drawable == "processing turn") return;
+    // let drawable = await getTurnStatus (pubClient, roomCode, "processing turn");
+    // console.log(drawable);
+    // if (drawable == "processing turn") return;
 
-    await setTurnStatus(pubClient, roomCode, "processing turn");
+    // await setTurnStatus(pubClient, roomCode, "processing turn");
     let roomSettings = await getGameData(pubClient, roomCode);
     let playerOrder = await getPlayerPos(pubClient, roomCode);
     //check player turn
@@ -79,7 +79,7 @@ module.exports = async (io, socket, pubClient) => {
         revealed: null,
         playerTurn: null,
         action: "endgame",
-        results
+        results,
       });
       return;
     }
@@ -92,6 +92,7 @@ module.exports = async (io, socket, pubClient) => {
       io.emit("wildCard", {
         card: revealCard,
       });
+      console.log(wildCard, revealCard)
 
       //test
 
@@ -115,7 +116,7 @@ module.exports = async (io, socket, pubClient) => {
       });
 
       if (match.length == 2) {
-        await setTurnStatus(pubClient, roomCode, "open");
+        // await setTurnStatus(pubClient, roomCode, "open");
         io.to(roomCode).emit("faceoff_challenged", {
           faceoff: "init",
           playersInvolved: match,
@@ -178,7 +179,7 @@ module.exports = async (io, socket, pubClient) => {
     await setPlayerhand(pubClient, roomCode, socket.id, revealCard);
 
     if (dual) {
-        await setTurnStatus(pubClient, roomCode, "open");
+      // await setTurnStatus(pubClient, roomCode, "open");
       io.to(roomCode).emit(`player_draw`, {
         card: revealCard,
         playerId: playerId,
@@ -197,7 +198,7 @@ module.exports = async (io, socket, pubClient) => {
     //   playerTurn: nextTurn,
     //   action: "none",
     // });
-    await setTurnStatus(pubClient, roomCode, "open");
+    // await setTurnStatus(pubClient, roomCode, "open");
     io.to(roomCode).emit(`player_draw`, {
       card: revealCard,
       playerId: playerId,
