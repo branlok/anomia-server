@@ -18,54 +18,53 @@ const setWildCards = require("../RedisModel/setWildCards");
 
 module.exports = async (io, socket, pubClient) => {
   const startGame = async (roomCode, cb) => {
-    //we assume its the leader that started the game.
-    //should still protect from outside attacker.
+    //authorization - creator, from: party room
+    try {
+      //1. Disllow game start if not all member are ready
+      let roomSettings = await getGameData(pubClient, roomCode);
+      if (!confirmRoomReady(cb, roomSettings)) return;
 
-    //check game is ready
-    let roomSettings = await getGameData(pubClient, roomCode);
+      //2. record player position, update Game Progress
+      const playersPos = await assignPlayerPositions(io, pubClient, roomCode); //record all players in array to redis, and return [...[socket.id, username]]
+      await editGameProgress(
+        pubClient,
+        roomCode,
+        "status",
+        "starting",
+        "numberOfPlayers",
+        playersPos.length,
+        "playerTurn",
+        0
+      );
 
-    if (!confirmRoomReady(cb, roomSettings)) return;
-
-    const playersPos = await assignPlayerPositions(io, pubClient, roomCode);
-
-    //iterate the room's members and assigning them a number.
-
-    await editGameProgress(pubClient, roomCode, "status", "starting");
-    await editGameProgress(
-      pubClient,
-      roomCode,
-      "numberOfPlayers",
-      playersPos.length
-    );
-    await editGameProgress(pubClient, roomCode, "playerTurn", 0);
-
-    io.to(roomCode).emit("startGame", {
-      status: "success",
-      message: "start",
-      init: {
-        playerTurn: 0,
-        playerDraw: 0,
-        playerPositions: [...playersPos],
-        chosenDeck: 1,
-      },
-    });
+      //return to creator
+      io.to(roomCode).emit("startGame", {
+        status: "success",
+        message: "start",
+        init: {
+          playerTurn: 0,
+          playerDraw: 0,
+          playerPositions: [...playersPos],
+          chosenDeck: 1,
+        },
+      });
+    } catch {
+      cb({ status: "server error" });
+    }
   };
 
   const draw = async (roomCode, cb) => {
+    //any player - call from game session
+
     let roomSettings = await getGameData(pubClient, roomCode);
-    let playerOrder = await getPlayerPos(pubClient, roomCode);
-    //check player turn
+    let playerOrder = await getPlayerPos(pubClient, roomCode); //redis returns an array [id1, id2, id3]
+
+    //check current player turn
     let playerId = playerOrder[roomSettings.playerTurn]; //getID of player, ensure member of room in redis.
-    //Make sure its the right player drawing.
+    //validate cooresponding character
     if (!playerId === socket.id) return;
-
-    let lastPlayer = roomSettings.playerTurn;
-    let nextTurn = ++roomSettings.playerTurn % playerOrder.length;
-    let nextPlayerId = playerOrder[nextTurn];
-
     let revealCard = await getTopCard(pubClient, roomCode);
 
-    //check if last card
     if (revealCard == null) {
       let playerIds = playerOrder;
       let results = await mGetPlayerPoints(pubClient, roomCode, playerIds);
@@ -79,13 +78,101 @@ module.exports = async (io, socket, pubClient) => {
       return;
     }
 
-    //check card is wild
+    let lastPlayer = roomSettings.playerTurn; //player pos that will draw the revealCard
+    let nextTurn = ++roomSettings.playerTurn % playerOrder.length; //player pos that will allow to draw next
+    let nextPlayerId = playerOrder[nextTurn]; //specific id from player pos
+
+    //is it a wild card?
     let wildCard = cards[revealCard].type == "wild" ? true : false;
 
     if (wildCard) {
-      await runWildcard(pubClient, io, roomCode, revealCard, playerOrder);
+      await runWildcard(pubClient, io, roomCode, cb, revealCard, playerOrder);
       return;
     }
+
+
+    await setPlayerhand(pubClient, roomCode, socket.id, revealCard); // we only set if it isn't a wild card.
+    await editGameProgress(pubClient, roomCode, "playerTurn", nextTurn);
+    // await setPlayerhand(pubClient, roomCode, socket.id, revealCard);
+
+    io.to(roomCode).emit(`player_draw`, {
+      card: revealCard,
+      playerId: playerId,
+      nextToDraw: nextPlayerId,
+    });
+
+    let wildCardPresent = await getWildcards(pubClient, roomCode);
+    // let dual = false;
+
+    let dual = false;
+
+    for (let i = 0; i < playerOrder.length; i++) {
+        //dont compare itself
+      if (i == lastPlayer) continue;
+  
+      // if (!revealCard) break;
+  
+      let card = await getPlayerHand(pubClient, roomCode, playerOrder[i]);
+      if (card.length === 0) continue;
+  
+      if (cards[revealCard].match[0] == cards[card[0]].match[0]) {
+        dual = [playerOrder[i], socket.id];
+        break;
+      }
+  
+      if (wildCardPresent.length > 0) {
+        //we can use better search than this. this is temporary.
+        if (cards[revealCard].match[0] == cards[wildCardPresent[0]].match[0]) {
+          if (cards[card[0]].match[0] == cards[wildCardPresent[0]].match[1]) {
+            dual = [playerOrder[i], socket.id];
+            break;
+          } else {
+            continue;
+          }
+        } else if (
+          cards[revealCard].match[0] == cards[wildCardPresent[0]].match[1]
+        ) {
+          if (cards[card[0]].match[0] == cards[wildCardPresent[0]].match[0]) {
+            dual = [playerOrder[i], socket.id];
+            break;
+          } else {
+            continue;
+          }
+        }
+      }
+    }
+  
+    //   await editGameProgress(pubClient, roomCode, "playerTurn", nextTurn); // update to next turn.
+  
+    //   await setPlayerhand(pubClient, roomCode, socket.id, revealCard);
+  
+    if (dual) {
+      // await setTurnStatus(pubClient, roomCode, "open");
+    //   io.to(roomCode).emit(`player_draw`, {
+    //     card: revealCard,
+    //     playerId: playerId,
+    //     nextToDraw: nextPlayerId,
+    //   });
+      io.to(roomCode).emit("faceoff_challenged", {
+        faceoff: "init",
+        playersInvolved: dual,
+      });
+      return;
+    }
+
+    // comparePlayerhands(
+    //   pubClient,
+    //   io,
+    //   socket,
+    //   roomCode,
+    //   wildCardPresent,
+    //   revealCard,
+    //   lastPlayer,
+    //   playerOrder,
+    //   nextTurn,
+    //   nextPlayerId,
+    //   playerId
+    // );
 
     // if (wildCard) {
     //   await setWildCards(pubClient, roomCode, revealCard);
@@ -133,22 +220,7 @@ module.exports = async (io, socket, pubClient) => {
     //   return;
     // }
 
-    let wildCardPresent = await getWildcards(pubClient, roomCode);
-    // let dual = false;
 
-    comparePlayerhands(
-      pubClient,
-      io,
-      socket,
-      roomCode,
-      wildCardPresent,
-      revealCard,
-      lastPlayer,
-      playerOrder,
-      nextTurn,
-      nextPlayerId,
-      playerId
-    );
 
     // async function comparePlayerhands(
     //   pubClient,
@@ -273,11 +345,15 @@ module.exports = async (io, socket, pubClient) => {
     //   action: "none",
     // });
     // await setTurnStatus(pubClient, roomCode, "open");
-    io.to(roomCode).emit(`player_draw`, {
-      card: revealCard,
-      playerId: playerId,
-      nextToDraw: nextPlayerId,
-    });
+
+    // await editGameProgress(pubClient, roomCode, "playerTurn", nextTurn);
+    // // await setPlayerhand(pubClient, roomCode, socket.id, revealCard);
+
+    // io.to(roomCode).emit(`player_draw`, {
+    //   card: revealCard,
+    //   playerId: playerId,
+    //   nextToDraw: nextPlayerId,
+    // });
 
     cb({ status: "success", nextToDraw: nextPlayerId, faceoff: false });
 
@@ -402,6 +478,7 @@ module.exports = async (io, socket, pubClient) => {
 function confirmRoomReady(cb, roomSettings) {
   if (roomSettings.status !== "ready") {
     cb({ status: "failed", message: "not all members are ready" });
+    console.log("yolo");
     return false;
   } else {
     return true;
@@ -409,41 +486,44 @@ function confirmRoomReady(cb, roomSettings) {
 }
 
 async function assignPlayerPositions(io, pubClient, roomCode) {
+  //get every member from
   let members = await getGameMembersData(pubClient, roomCode);
+  //socket.io method, returns a set of all socket.id that are within the room.
   let room = io.of("/").adapter.rooms.get(roomCode);
-  //let position = 0;
+
   let playersAssignment = [];
   let onlyID = [];
   let pos = 0;
   room.forEach((key) => {
-    //[position, username]
     onlyID.push(key);
     playersAssignment.push([key, members[key]]);
-    // position++;
+    //i.e [[5VP89MrEEJlADs3nAAAF, bob], [5VP89MrEEJlADs3nAAAF, jim]]
   });
-
   await setPlayersPos(pubClient, roomCode, ...onlyID);
   return playersAssignment;
 }
 
-async function runWildcard(pubClient, io, roomCode, revealCard, playerOrder) {
-  await setWildCards(pubClient, roomCode, revealCard);
+async function runWildcard(pubClient, io, roomCode, cb, revealCard, playerOrder) {
+  await setWildCards(pubClient, roomCode, revealCard); //push to wildCards array,
   io.emit("wildCard", {
     card: revealCard,
   });
 
+  //get all player top hand;
   let promiseArray = [];
-
   for (let i = 0; i < playerOrder.length; i++) {
     promiseArray.push(getPlayerHand(pubClient, roomCode, playerOrder[i]));
   }
   let tophands = await Promise.all(promiseArray);
+
   let match = [];
+
   tophands.forEach((item, idx) => {
     //this evaluates all cards between, can use a better algorithmn
     if (item.length == 0) {
       return;
     }
+    //each player card is compared against the wildcard spec
     if (cards[item[0]].match[0] == cards[revealCard].match[0]) {
       match.push(playerOrder[idx]);
     } else if (cards[item[0]].match[0] == cards[revealCard].match[1]) {
@@ -457,7 +537,10 @@ async function runWildcard(pubClient, io, roomCode, revealCard, playerOrder) {
       faceoff: "init",
       playersInvolved: match,
     });
+  } else {
+     cb({command: "draw again"})
   }
+
   //check if there is a pair;
 
   //   if (dual) {
@@ -485,10 +568,14 @@ async function comparePlayerhands(
   nextPlayerId,
   playerId
 ) {
+
   let dual = false;
+
   for (let i = 0; i < playerOrder.length; i++) {
+      //dont compare itself
     if (i == lastPlayer) continue;
-    if (!revealCard) break;
+
+    // if (!revealCard) break;
 
     let card = await getPlayerHand(pubClient, roomCode, playerOrder[i]);
     if (card.length === 0) continue;
@@ -497,6 +584,7 @@ async function comparePlayerhands(
       dual = [playerOrder[i], socket.id];
       break;
     }
+
     if (wildCardPresent.length > 0) {
       //we can use better search than this. this is temporary.
       if (cards[revealCard].match[0] == cards[wildCardPresent[0]].match[0]) {
@@ -519,9 +607,9 @@ async function comparePlayerhands(
     }
   }
 
-  await editGameProgress(pubClient, roomCode, "playerTurn", nextTurn); // update to next turn.
+  //   await editGameProgress(pubClient, roomCode, "playerTurn", nextTurn); // update to next turn.
 
-  await setPlayerhand(pubClient, roomCode, socket.id, revealCard);
+  //   await setPlayerhand(pubClient, roomCode, socket.id, revealCard);
 
   if (dual) {
     // await setTurnStatus(pubClient, roomCode, "open");
@@ -535,5 +623,7 @@ async function comparePlayerhands(
       playersInvolved: dual,
     });
     return;
+  } else {
+      cb({command: "draw again"})
   }
 }

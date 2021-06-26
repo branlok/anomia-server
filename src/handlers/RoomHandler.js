@@ -47,7 +47,7 @@ module.exports = async (io, socket, pubClient) => {
     //RELAY BACK TO CLIENT
     // cb({ status: "success", connectedRoom: roomCode, username,  });
     await setMemberToGame(pubClient, roomCode, username, socket.id);
-    let members = await getGameMembersData(pubClient, roomCode);
+    let members = await getGameMembersData(pubClient, roomCode); //{id: username}
     cb({
       status: "success",
       connectedRoom: roomCode,
