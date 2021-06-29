@@ -154,6 +154,7 @@ module.exports = async (io, socket, pubClient) => {
 
   const winCard = async (roomCode, faceoffIds, cb) => {
     //first to submit wins...
+
     let roomSettings = await getGameData(pubClient, roomCode);
     let playerOrder = await getPlayerPos(pubClient, roomCode);
 
@@ -162,19 +163,20 @@ module.exports = async (io, socket, pubClient) => {
 
     await incrPlayerPoint(pubClient, roomCode, socket.id);
 
-    io.to(roomCode).emit(`faceoff_resolved_${faceoffIds[0]}`, {
-      victor: socket.id,
-      nextToDraw: playerOrder[roomSettings.playerTurn],
-    });
+    // io.to(roomCode).emit(`faceoff_resolved_${faceoffIds[0]}`, {
+    //   victor: socket.id,
+    //   nextToDraw: playerOrder[roomSettings.playerTurn],
+    // });
 
-    io.to(roomCode).emit(`faceoff_resolved_${faceoffIds[1]}`, {
-      victor: socket.id,
-      nextToDraw: playerOrder[roomSettings.playerTurn],
-    });
+    // io.to(roomCode).emit(`faceoff_resolved_${faceoffIds[1]}`, {
+    //   victor: socket.id,
+    //   nextToDraw: playerOrder[roomSettings.playerTurn],
+    // });
 
     cb({ message: "successfully incremented user points" });
-
+    console.log([faceoffIds[0], faceoffIds[1]], "playeres involved");
     io.to(roomCode).emit(`faceoff_resolved`, {
+      players: [faceoffIds[0], faceoffIds[1]],
       victor: socket.id,
       nextToDraw: playerOrder[roomSettings.playerTurn],
     });
@@ -215,7 +217,7 @@ module.exports = async (io, socket, pubClient) => {
           continue;
         } else {
           if (!cards[tophands[i][0]] || !cards[tophands[j][0]]) {
-              //neither has no card, then we can skip it.
+            //neither has no card, then we can skip it.
             continue;
           }
           if (
