@@ -1,6 +1,7 @@
 const { nanoid } = require("nanoid");
-const initalizeRoomData = require("../RedisModel/createGameData");
+const createGameData = require("../RedisModel/createGameData");
 const editGameProgress = require("../RedisModel/editGameProgress");
+const expireGame = require("../RedisModel/expireGame");
 const getGameRoomData = require("../RedisModel/getGameData");
 const getGameMembersData = require("../RedisModel/getGameMembersData");
 const isMemberReady = require("../RedisModel/isMemberReady");
@@ -11,21 +12,11 @@ const setMemberReady = require("../RedisModel/setMemberReady");
 const setMemberToGame = require("../RedisModel/setMemberToGame");
 const shuffle = require("../utils/shuffle");
 
-module.exports = async (io, socket, pubClient) => {
-  const passwordInquiry = async (roomCode, cb) => {
-    let roomSettings = await pubClient.hgetall(`game:${roomCode}`);
-    if (!roomSettings) {
-      cb({ status: "failed", message: "game not found" });
-      return;
-    }
-    let passwordLocked = roomSettings.passwordLocked == "true" ? true : false;
-    cb({ status: "success", password: passwordLocked });
-    // io.room(socket.id).emit("passwordInquiry", {})
-  };
-
+module.exports = async (io, socket, pubClient, rateLimiter) => {
   const createPartyRoom = async (username, password, cb) => {
     //START OF SET UP ROOM
     let roomCode = nanoid(6);
+    //Shuffle Cards
     let cards = [
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
       22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
@@ -34,13 +25,14 @@ module.exports = async (io, socket, pubClient) => {
       76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
       94, 95, 96, 97, 98, 99, 100,
     ];
-
-    // let cards = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-    //     22, 23, 24]
     let shuffledCards = shuffle(cards);
     setCards(pubClient, roomCode, shuffledCards); // dont need to await
 
-    await initalizeRoomData(pubClient, roomCode, username, password, socket.id); //also creator into game:room:members
+    await rateLimiter.consume(socket.handshake.address);
+    await createGameData(pubClient, roomCode, username, password, socket.id); //also creator into game:room:members
+    await setMemberToGame(pubClient, roomCode, username, socket.id);
+    await expireGame(pubClient, roomCode);
+
     socket.join(roomCode);
     //END OF SET  UP
 
@@ -48,6 +40,7 @@ module.exports = async (io, socket, pubClient) => {
     // cb({ status: "success", connectedRoom: roomCode, username,  });
     await setMemberToGame(pubClient, roomCode, username, socket.id);
     let members = await getGameMembersData(pubClient, roomCode); //{id: username}
+
     cb({
       status: "success",
       connectedRoom: roomCode,
@@ -59,6 +52,7 @@ module.exports = async (io, socket, pubClient) => {
         ready: true,
       },
     });
+
     io.to(roomCode).emit("roomUpdates", {
       currentMembers: members,
       [socket.id]: {
@@ -67,7 +61,6 @@ module.exports = async (io, socket, pubClient) => {
         ready: true,
       },
     });
-    //END OF RELAY
   };
 
   const joinPartyRoom = async (roomCode, username, password, cb) => {
@@ -78,6 +71,7 @@ module.exports = async (io, socket, pubClient) => {
     if (!confirmRoomRequirePassword(cb, roomSettings, password)) return;
 
     //RELAY NECESSARY DATA BACK TO USER
+    await rateLimiter.consume(socket.handshake.address);
     await setMemberToGame(pubClient, roomCode, username, socket.id);
     await setMemberNotReady(pubClient, roomCode, socket.id);
     let members = await getGameMembersData(pubClient, roomCode);
@@ -177,17 +171,30 @@ module.exports = async (io, socket, pubClient) => {
   };
 
   let checkRoom = (roomCode, cb) => {
-      console.log("i ran for some reason")
+    console.log("i ran for some reason");
     if (!confirmRoomInitialized(io, cb, roomCode)) {
-        cb({status: "error", message: "room does not exist"})
-        return;
-    }; //should also add  is only open if the game is in lobby mode incase random person joins in during game.
+      cb({ status: "error", message: "room does not exist" });
+      return;
+    } //should also add  is only open if the game is in lobby mode incase random person joins in during game.
     if (!confirmRoomHasCapacity(io, cb, roomCode)) return;
-  }
+  };
+
+  const passwordInquiry = async (roomCode, cb) => {
+    await rateLimiter.consume(socket.handshake.address);
+    let roomSettings = await getGameRoomData(pubClient, roomCode); 
+    // let roomSettings = await pubClient.hgetall(`game:${roomCode}`);
+    if (!roomSettings) {
+      cb({ status: "failed", message: "game not found" });
+      return;
+    }
+    let passwordLocked = roomSettings.passwordLocked == "true" ? true : false;
+    cb({ status: "success", password: passwordLocked });
+    // io.room(socket.id).emit("passwordInquiry", {})
+  };
 
   //MAIN SEQUENCES
   socket.on("setNewRoom", createPartyRoom);
-  socket.on("checkRoom", checkRoom)
+  socket.on("checkRoom", checkRoom);
   socket.on("joinNewRoom", joinPartyRoom);
   socket.on("userReady", userReady);
   socket.on("userNotReady", userNotReady);
@@ -197,25 +204,12 @@ module.exports = async (io, socket, pubClient) => {
   socket.on("passwordInquiry", passwordInquiry);
 };
 
-/*
-SETUP PARTY FOR GAME
-1. CREATE ROOM
-2. JOIN ROOM
-3. ALL READY UP 
-
-4. START - INITAILIZE GAME DATA
-
-GAME LOGIC
-5. USER ROTATION
-6. WIN / NO ACTION / PASS
-
-*/
-
 async function checkAllIsReady(pubClient, io, roomCode) {
   //grabs all users in the room, and test against if they are all ready, and emit creator to start;
   let room = io.of("/").adapter.rooms.get(roomCode);
   console.log(room);
   let fetchPlayerStatus = [];
+
   room.forEach((item) => {
     console.log(isMemberReady(pubClient, roomCode, item));
     fetchPlayerStatus.push(isMemberReady(pubClient, roomCode, item));
@@ -263,7 +257,7 @@ function confirmUserFromRoom(cb, socket, roomCode) {
 function confirmRoomInitialized(io, cb, roomCode) {
   let exists = io.of("/").adapter.rooms.has(roomCode);
   if (!exists) {
-    cb({status: "error", message: "Room does not exist"})
+    cb({ status: "error", message: "Room does not exist" });
     return false;
   } else {
     return true;

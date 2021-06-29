@@ -1,12 +1,12 @@
 const cards = require("../Game/cards");
 const editGameProgress = require("../RedisModel/editGameProgress");
-const getCards = require("../RedisModel/getCards");
+// const getCards = require("../RedisModel/getCards");
 const getGameData = require("../RedisModel/getGameData");
 const getGameMembersData = require("../RedisModel/getGameMembersData");
 const getPlayerHand = require("../RedisModel/getPlayerHand");
 const getPlayerPos = require("../RedisModel/getPlayerPos");
 const getTopCard = require("../RedisModel/getTopCard");
-const getTurnStatus = require("../RedisModel/getTurnStatus");
+// const getTurnStatus = require("../RedisModel/getTurnStatus");
 const getWildcards = require("../RedisModel/getWildcards");
 const incrPlayerPoint = require("../RedisModel/incrPlayerPoint");
 const mGetPlayerPoints = require("../RedisModel/mGetPlayerPoints");
@@ -172,15 +172,16 @@ module.exports = async (io, socket, pubClient) => {
       nextToDraw: playerOrder[roomSettings.playerTurn],
     });
 
+    cb({ message: "successfully incremented user points" });
+
     io.to(roomCode).emit(`faceoff_resolved`, {
       victor: socket.id,
       nextToDraw: playerOrder[roomSettings.playerTurn],
     });
 
-    //TEST
+    //check for more matches:
     let promiseArray = [];
     let wildCardPresent = await getWildcards(pubClient, roomCode);
-    console.log(wildCardPresent, "read this");
     for (let i = 0; i < playerOrder.length; i++) {
       promiseArray.push(getPlayerHand(pubClient, roomCode, playerOrder[i]));
     }
@@ -193,7 +194,6 @@ module.exports = async (io, socket, pubClient) => {
         if (item.length == 0) {
           return;
         }
-
         if (cards[item[0]].match[0] == cards[wildCardPresent[0]].match[0]) {
           match.push(playerOrder[idx]);
         } else if (
@@ -214,6 +214,10 @@ module.exports = async (io, socket, pubClient) => {
         if (i == j) {
           continue;
         } else {
+          if (!cards[tophands[i][0]] || !cards[tophands[j][0]]) {
+              //neither has no card, then we can skip it.
+            continue;
+          }
           if (
             cards[tophands[i][0]].match[0] == cards[tophands[j][0]].match[0]
           ) {
@@ -224,20 +228,6 @@ module.exports = async (io, socket, pubClient) => {
         }
       }
     }
-
-    // tophands.forEach((item, idx) => {
-    //     //this evaluates all cards between, can use a better algorithmn
-    //     if (item.length == 0) {
-    //       return;
-    //     }
-    //     if (cards[item[0]].match[0] == cards[wildCardPresent[0]].match[0]) {
-    //       match.push(playerOrder[idx]);
-    //     } else if (cards[item[0]].match[0] == cards[wildCardPresent[0]].match[1]) {
-    //       match.push(playerOrder[idx]);
-    //     }
-    //   });
-
-    console.log(match, pair, "the pair");
 
     if (match.length == 2) {
       io.to(roomCode).emit("faceoff_challenged", {
@@ -253,7 +243,7 @@ module.exports = async (io, socket, pubClient) => {
       });
     }
 
-    cb({ message: "Ayo" });
+    // cb({ message: "Ayo" });
 
     //TEST
   };
