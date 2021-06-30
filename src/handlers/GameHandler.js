@@ -62,7 +62,7 @@ module.exports = async (io, socket, pubClient) => {
     //check current player turn
     let playerId = playerOrder[roomSettings.playerTurn]; //getID of player, ensure member of room in redis.
     //validate cooresponding character
-    if (!playerId === socket.id) return;
+    if (!(playerId === socket.id)) return;
     let revealCard = await getTopCard(pubClient, roomCode);
 
     if (revealCard == null) {
