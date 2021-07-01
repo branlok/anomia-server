@@ -7,6 +7,8 @@ module.exports = async (pubClient, roomCode, username, password, socketID) => {
       `game:${roomCode}`,
       "creator",
       socketID,
+      "roomCode",
+      roomCode,
       "creatorUsername",
       username,
       "status",
@@ -19,5 +21,10 @@ module.exports = async (pubClient, roomCode, username, password, socketID) => {
       roomLimit,
       socketID,
       "ready",
-    );
+    ).then((res) => {
+      pubClient.expire(`game:${roomCode}`, 7200);
+    }).catch((err) => {
+      console.log(err)
+      throw {error: err, from: "redis"}
+    })
 }

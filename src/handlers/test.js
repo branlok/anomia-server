@@ -98,6 +98,7 @@ module.exports = async (io, socket, pubClient, rateLimiter) => {
           });
           return;
         }
+    
         //CHECK WILD CARD
         let lastPlayer = roomSettings.playerTurn; //player pos that will draw the revealCard
         let nextTurn = ++roomSettings.playerTurn % playerOrder.length; //player pos that will allow to draw next
@@ -126,6 +127,7 @@ module.exports = async (io, socket, pubClient, rateLimiter) => {
           let wildCardPresent = await getWildcards(pubClient, roomCode); //top wild card
 
           let dual = await compareSameAndWildCard(pubClient,roomCode, playerOrder, lastPlayer, revealCard, wildCardPresent,socket);
+      
           if (dual) {
             io.to(roomCode).emit("faceoff_challenged", {
               faceoff: "init",
@@ -136,137 +138,108 @@ module.exports = async (io, socket, pubClient, rateLimiter) => {
       
           cb({ status: "success", nextToDraw: nextPlayerId, faceoff: false });
         }
+    
+        
     } catch(err) {
-      if (err) {
-        if (err.from == "rateLimiter") {
-          io.to(socket.id).emit("err", {
-            status: "error",
-            message: "too many calls too quickly"
-          })
-        }
-        if (err.from == "redis") {
-          io.to(socket.id).emit("err", {
-            status: "error",
-            message: "Game session corrupted"
-          })
-        }
-      }
+
     }
     
   };
 
   const winCard = async (roomCode, faceoffIds, cb) => {
     //first to submit wins...
-    try {
-      await rateLimiter.consume(socket.handshake.address).catch((rateLimiterRes) => {
-        throw {error: rateLimiterRes, from: 'rateLimiter'}
-      })
-      
-      let roomSettings = await getGameData(pubClient, roomCode);
-      let playerOrder = await getPlayerPos(pubClient, roomCode);
-  
-      await popPlayerhand(pubClient, roomCode, faceoffIds[0]);
-      await popPlayerhand(pubClient, roomCode, faceoffIds[1]);
-  
-      await incrPlayerPoint(pubClient, roomCode, socket.id);
-      cb({ message: "successfully incremented user points" });
+    await rateLimiter.consume(socket.handshake.address).catch((rateLimiterRes) => {
+      throw {error: rateLimiterRes, from: 'rateLimiter'}
+    })
+    let roomSettings = await getGameData(pubClient, roomCode);
+    let playerOrder = await getPlayerPos(pubClient, roomCode);
 
-      console.log([faceoffIds[0], faceoffIds[1]], "playeres involved");
-      io.to(roomCode).emit(`faceoff_resolved`, {
-        players: [faceoffIds[0], faceoffIds[1]],
-        victor: socket.id,
-        nextToDraw: playerOrder[roomSettings.playerTurn],
+    await popPlayerhand(pubClient, roomCode, faceoffIds[0]);
+    await popPlayerhand(pubClient, roomCode, faceoffIds[1]);
+
+    await incrPlayerPoint(pubClient, roomCode, socket.id);
+
+    // io.to(roomCode).emit(`faceoff_resolved_${faceoffIds[0]}`, {
+    //   victor: socket.id,
+    //   nextToDraw: playerOrder[roomSettings.playerTurn],
+    // });
+
+    // io.to(roomCode).emit(`faceoff_resolved_${faceoffIds[1]}`, {
+    //   victor: socket.id,
+    //   nextToDraw: playerOrder[roomSettings.playerTurn],
+    // });
+
+    cb({ message: "successfully incremented user points" });
+    console.log([faceoffIds[0], faceoffIds[1]], "playeres involved");
+    io.to(roomCode).emit(`faceoff_resolved`, {
+      players: [faceoffIds[0], faceoffIds[1]],
+      victor: socket.id,
+      nextToDraw: playerOrder[roomSettings.playerTurn],
+    });
+
+    //check for more matches:
+    let promiseArray = [];
+    let wildCardPresent = await getWildcards(pubClient, roomCode);
+    for (let i = 0; i < playerOrder.length; i++) {
+      promiseArray.push(getPlayerHand(pubClient, roomCode, playerOrder[i]));
+    }
+
+    let tophands = await Promise.all(promiseArray);
+    let match = [];
+    if (wildCardPresent.length > 0) {
+      tophands.forEach((item, idx) => {
+        //this evaluates all cards between, can use a better algorithmn
+        if (item.length == 0) {
+          return;
+        }
+        if (cards[item[0]].match[0] == cards[wildCardPresent[0]].match[0]) {
+          match.push(playerOrder[idx]);
+        } else if (
+          cards[item[0]].match[0] == cards[wildCardPresent[0]].match[1]
+        ) {
+          match.push(playerOrder[idx]);
+        }
       });
-  
-      //check if theres cascade
-      let promiseArray = [];
-      let wildCardPresent = await getWildcards(pubClient, roomCode);
+    }
 
-      for (let i = 0; i < playerOrder.length; i++) {
-        promiseArray.push(getPlayerHand(pubClient, roomCode, playerOrder[i]));
+    let pair = [];
+    for (let i = 0; i < tophands.length; i++) {
+      triggered = false;
+      if (triggered) {
+        break;
       }
-  
-      let tophands = await Promise.all(promiseArray);
-
-      let match = [];
-      //check between all players against all players for wildcard spec
-      if (wildCardPresent.length > 0) {
-        tophands.forEach((item, idx) => {
-          if (item.length == 0) {
-            //ignore empty hand players
-            return;
-          }
-          let playerTopCardSymbol = cards[item[0]].match[0];
-          let wildCardSymbolOne = cards[wildCardPresent[0]].match[0];
-          let wildCardSymbolTwo = cards[wildCardPresent[0]].match[1];
-          if (playerTopCardSymbol == wildCardSymbolOne) {
-            match.push(playerOrder[idx]);
-          } else if (
-            playerTopCardSymbol == wildCardSymbolTwo
-          ) {
-            match.push(playerOrder[idx]);
-          }
-        });
-      }
-  
-      let pair = [];
-      let triggered = false;
-      for (let i = 0; i < tophands.length; i++) {
-        if (triggered) {
-          break;
-        }
-        let topHandOne = cards[tophands[i][0]];
-        for (let j = 0; j < tophands.length; j++) {
-          if (i == j) {
+      for (let j = 0; j < tophands.length; j++) {
+        if (i == j) {
+          continue;
+        } else {
+          if (!cards[tophands[i][0]] || !cards[tophands[j][0]]) {
+            //neither has no card, then we can skip it.
             continue;
-          } else {
-            let topHandTwo = cards[tophands[j][0]];
-            if (!topHandOne || !topHandTwo) {
-              //either has no card, then we can skip it.
-              continue;
-            }
-            if (
-              topHandOne.match[0] == topHandTwo.match[0]
-            ) {
-              pair.push(playerOrder[i], playerOrder[j]);
-              triggered = true;
-              break;
-            }
           }
-        }
-      }
-  
-      if (match.length == 2) {
-        io.to(roomCode).emit("faceoff_challenged", {
-          faceoff: "init",
-          playersInvolved: match,
-        });
-      }
-  
-      if (pair.length == 2) {
-        io.to(roomCode).emit("faceoff_challenged", {
-          faceoff: "init",
-          playersInvolved: pair,
-        });
-      }
-      
-    } catch(err) {
-      if (err) {
-        if (err.from == "rateLimiter") {
-          io.to(socket.id).emit("err", {
-            status: "error",
-            message: "too many calls too quickly"
-          })
-        }
-        if (err.from == "redis") {
-          io.to(socket.id).emit("err", {
-            status: "error",
-            message: "Game session corrupted"
-          })
+          if (
+            cards[tophands[i][0]].match[0] == cards[tophands[j][0]].match[0]
+          ) {
+            pair.push(playerOrder[i], playerOrder[j]);
+            triggered = true;
+            break;
+          }
         }
       }
     }
-    
+
+    if (match.length == 2) {
+      io.to(roomCode).emit("faceoff_challenged", {
+        faceoff: "init",
+        playersInvolved: match,
+      });
+    }
+
+    if (pair.length >= 2) {
+      io.to(roomCode).emit("faceoff_challenged", {
+        faceoff: "init",
+        playersInvolved: pair,
+      });
+    }
 
     // cb({ message: "Ayo" });
 

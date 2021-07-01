@@ -35,30 +35,52 @@ const io = new Server(server, {
 
 io.adapter(redisAdapter(pubClient, subClient));
 
-app.use(express.static(path.join(__dirname, "build")));
-
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "build", "index.html"));
+const rateLimiter = new RateLimiterMemory({
+  points: 15, // 5 points
+  duration: 1, // per second
 });
+
+const rateLimiterMiddleware = (req, res, next) => {
+  rateLimiter.consume(req.ip)
+     .then(() => {
+         next();
+     })
+     .catch(_ => {
+       console.log("ran")
+         res.status(429).send('Too Many Requests');
+     });
+  };
+
+  app.use(rateLimiterMiddleware);
+// app.use(express.static(path.join(__dirname, "build")));
+
+// app.get("/", (req, res) => {
+//   res.sendFile(path.join(__dirname, "build", "index.html"));
+// });
 
 //Backend
 io.use((socket, next) => {
-  //rate limiting implementation
   next();
 });
 
-const rateLimiter = new RateLimiterMemory({
-  points: 5, // 5 points
-  duration: 1, // per second
-});
+
+
 
 const roomHandler = require("./handlers/RoomHandler");
 const gameHandler = require("./handlers/GameHandler");
 
 //CONNECTION
-
+var connectionsLimit = 500
 io.on("connection", (socket) => {
   //LOG NEW CONNECTION
+  if (io.engine.clientsCount > connectionsLimit) {
+    socket.emit('err', { message: 'reach the limit of connections' })
+    socket.disconnect()
+    console.log('Max connections exceeded, Disconnecting...')
+    //! need to consider how to take action when connection reach limit.
+    return
+  }
+
   console.log("a user connected", socket.id);
   // USER CREATE NEW ROOM
   roomHandler(io, socket, pubClient, rateLimiter);
